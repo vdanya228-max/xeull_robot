@@ -14,6 +14,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from dotenv import load_dotenv
+from aiohttp import web
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -219,9 +220,27 @@ async def process_admin_reply(message: Message, state: FSMContext):
 # Регистрация роутера и запуск
 dp.include_router(router)
 
+async def handle_health_check(request):
+    return web.Response(text="Bot is running!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/", handle_health_check)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    # Порт 7860 для Hugging Face или 8080 для Render
+    port = int(os.getenv("PORT", 7860))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    logger.info(f"Веб-сервер запущен на порту {port}")
+    await site.start()
+
 async def main():
     logger.info("--- БОТ ЗАПУЩЕН (ВЕРСИЯ С ИСТОРИЕЙ) ---")
     logger.info(f"Админ ID: {ADMIN_ID}")
+    
+    # Запускаем веб-сервер в фоне (нужно для хостинга)
+    asyncio.create_task(start_web_server())
+    
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 

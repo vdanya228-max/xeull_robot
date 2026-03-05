@@ -15,4 +15,5 @@ COPY bot.py .
 COPY history.json .
 
 # Запуск бота
+EXPOSE 7860
 CMD ["python", "bot.py"]
