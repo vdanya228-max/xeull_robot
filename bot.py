@@ -16,236 +16,119 @@ from aiogram.client.default import DefaultBotProperties
 from dotenv import load_dotenv
 from aiohttp import web
 
-# Настройка логирования
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
-# Загрузка переменных окружения
+# --- НАСТРОЙКА ---
 load_dotenv()
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', force=True)
+logger = logging.getLogger(__name__)
 
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID_ENV = os.getenv("ADMIN_ID")
 
 if not TOKEN or not ADMIN_ID_ENV:
-    logger.error("Ошибка: Токен или ID администратора не найдены в .env файле!")
+    logger.critical("ОШИБКА: BOT_TOKEN или ADMIN_ID не найдены в переменных окружения!")
     exit(1)
-
 try:
     ADMIN_ID = int(ADMIN_ID_ENV)
 except ValueError:
-    logger.error("Ошибка: ADMIN_ID в .env файле должен быть числом!")
+    logger.critical("ОШИБКА: ADMIN_ID должен быть числом.")
     exit(1)
 
-# Файл для хранения истории
+# --- РАБОТА С ИСТОРИЕЙ ---
 HISTORY_FILE = "history.json"
-
 def load_history() -> Dict[str, Dict]:
     if os.path.exists(HISTORY_FILE):
         try:
-            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            logger.error(f"Ошибка загрузки истории: {e}")
-            return {}
+            with open(HISTORY_FILE, "r", encoding="utf-8") as f: return json.load(f)
+        except Exception as e: logger.error(f"Ошибка загрузки истории: {e}")
     return {}
-
 def save_history(history: Dict[str, Dict]):
     try:
-        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-            json.dump(history, f, ensure_ascii=False, indent=4)
-    except Exception as e:
-        logger.error(f"Ошибка сохранения истории: {e}")
-
+        with open(HISTORY_FILE, "w", encoding="utf-8") as f: json.dump(history, f, ensure_ascii=False, indent=4)
+    except Exception as e: logger.error(f"Ошибка сохранения истории: {e}")
 def add_to_history(user_id: int, name: str, username: str, text: str):
     history = load_history()
     user_id_str = str(user_id)
-    
-    if user_id_str not in history:
-        history[user_id_str] = {
-            "name": name,
-            "username": username,
-            "messages": []
-        }
-    
-    # Добавляем сообщение с меткой времени
+    if user_id_str not in history: history[user_id_str] = {"name": name, "username": username, "messages": []}
     timestamp = datetime.now().strftime("%d.%m %H:%M")
     history[user_id_str]["messages"].append(f"[{timestamp}] {text}")
-    
-    # Ограничиваем историю последних 20 сообщений
-    if len(history[user_id_str]["messages"]) > 20:
-        history[user_id_str]["messages"] = history[user_id_str]["messages"][-20:]
-    
+    history[user_id_str]["messages"] = history[user_id_str]["messages"][-20:]
     save_history(history)
 
-# Состояния для FSM
-class AdminStates(StatesGroup):
-    waiting_for_reply = State()
-
-# Инициализация бота и диспетчера
+# --- ЛОГИКА БОТА ---
+class AdminStates(StatesGroup): waiting_for_reply = State()
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher(storage=MemoryStorage())
 router = Router()
-
-# Функция для создания кнопок управления для админа
-def get_admin_keyboard(user_id: int):
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="💬 Ответить", callback_data=f"reply_{user_id}"),
-            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_{user_id}")
-        ],
-        [
-            InlineKeyboardButton(text="📜 История", callback_data=f"history_{user_id}")
-        ]
-    ])
-    return keyboard
-
+def get_admin_keyboard(user_id: int): return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="💬 Ответить", callback_data=f"reply_{user_id}")], [InlineKeyboardButton(text="📜 История", callback_data=f"history_{user_id}")]])
 @router.message(Command("start"))
 async def cmd_start(message: Message):
-    if message.from_user.id == ADMIN_ID:
-        await message.answer("🛠 <b>Панель администратора запущена.</b>\n\nИспользуйте кнопки под сообщениями для ответа или просмотра истории.")
-    else:
-        await message.answer("👋 <b>Привет!</b> Напиши свой вопрос или сообщение, и я передам его администратору.")
-
-@router.message(Command("cancel"), StateFilter(AdminStates.waiting_for_reply))
-async def cmd_cancel(message: Message, state: FSMContext):
-    await state.clear()
-    await message.answer("❌ <b>Отправка ответа отменена.</b>")
-
-@router.message(Command("users"), F.from_user.id == ADMIN_ID)
-async def cmd_users(message: Message):
-    history = load_history()
-    if not history:
-        await message.answer("📭 Список пользователей пуст.")
-        return
-    
-    text = "👤 <b>Список написавших пользователей:</b>\n\n"
-    keyboard_buttons = []
-    
-    for user_id_str, data in history.items():
-        username = f" (@{data['username']})" if data['username'] else ""
-        button_text = f"{data['name']}{username}"
-        keyboard_buttons.append([InlineKeyboardButton(text=button_text, callback_data=f"history_{user_id_str}")])
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
-    await message.answer(text, reply_markup=keyboard)
-
-# Обработка сообщений от пользователей (не админов)
+    if message.from_user.id == ADMIN_ID: await message.answer("🛠 <b>Панель администратора запущена.</b>")
+    else: await message.answer("👋 <b>Привет!</b> Напиши свой вопрос, и я передам его администратору.")
 @router.message(F.chat.id != ADMIN_ID)
 async def forward_to_admin(message: Message):
     user = message.from_user
     username_text = f" (@{user.username})" if user.username else ""
     user_info = f"👤 <b>{user.full_name}</b>{username_text}\n🆔 <code>{user.id}</code>"
-    
-    # Сохраняем в историю
-    msg_text = message.text if message.text else "[Медиа-файл]"
+    msg_text = message.text or "[Медиа-файл]"
     add_to_history(user.id, user.full_name, user.username or "", msg_text)
-    
-    keyboard = get_admin_keyboard(user.id)
-    
     try:
-        if message.text:
-            await bot.send_message(ADMIN_ID, f"{user_info}\n\n{message.text}", reply_markup=keyboard)
-        else:
-            caption = (message.caption or "") + f"\n\n{user_info}"
-            await message.copy_to(chat_id=ADMIN_ID, caption=caption, reply_markup=keyboard)
-        
-        await message.answer("✅ <b>Ваше сообщение отправлено!</b> Ожидайте ответа.")
-    except Exception as e:
-        logger.error(f"Ошибка при пересылке: {e}")
-        await message.answer("❌ Произошла ошибка при отправке сообщения.")
-
-# Обработка нажатия на кнопку "История"
+        await bot.send_message(ADMIN_ID, f"{user_info}\n\n{msg_text}", reply_markup=get_admin_keyboard(user.id))
+        await message.answer("✅ <b>Ваше сообщение отправлено!</b>")
+    except Exception as e: logger.error(f"Ошибка при пересылке: {e}")
 @router.callback_query(F.data.startswith("history_"))
 async def handle_history_button(callback: CallbackQuery):
     user_id_str = callback.data.split("_")[1]
     history = load_history()
-    
-    if user_id_str not in history or not history[user_id_str]["messages"]:
-        await callback.answer("История сообщений пуста.")
-        return
-    
+    if user_id_str not in history or not history[user_id_str]["messages"]: return await callback.answer("История сообщений пуста.")
     user_data = history[user_id_str]
-    messages = user_data["messages"]
-    
-    text = f"📜 <b>История сообщений от {user_data['name']}:</b>\n\n"
-    text += "\n".join(messages[-10:]) # Показываем последние 10 сообщений
-    
-    # Кнопка для ответа прямо из истории
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💬 Ответить пользователю", callback_data=f"reply_{user_id_str}")]
-    ])
-    
-    await callback.message.answer(text, reply_markup=keyboard)
+    text = f"📜 <b>История {user_data['name']}:</b>\n\n" + "\n".join(user_data["messages"][-10:])
+    await callback.message.answer(text, reply_markup=get_admin_keyboard(user_id_str))
     await callback.answer()
-
-# Обработка нажатия на кнопку "Ответить"
 @router.callback_query(F.data.startswith("reply_"))
 async def handle_reply_button(callback: CallbackQuery, state: FSMContext):
     user_id = int(callback.data.split("_")[1])
     await state.update_data(reply_to_user_id=user_id)
     await state.set_state(AdminStates.waiting_for_reply)
-    
-    await callback.message.answer(f"📝 <b>Введите ответ для пользователя</b> (ID: {user_id}):\n\nЧтобы отменить, нажмите /cancel")
+    await callback.message.answer(f"📝 <b>Введите ответ для ID: {user_id}</b>")
     await callback.answer()
-
-# Обработка нажатия на кнопку "Отклонить"
-@router.callback_query(F.data.startswith("reject_"))
-async def handle_reject_button(callback: CallbackQuery):
-    user_id = int(callback.data.split("_")[1])
-    
-    try:
-        await bot.send_message(user_id, "❌ <b>Ваше обращение было отклонено администратором.</b>")
-        await callback.message.edit_reply_markup(reply_markup=None)
-        await callback.message.answer(f"✅ Уведомление об отклонении отправлено пользователю {user_id}.")
-    except Exception as e:
-        logger.error(f"Ошибка при отклонении: {e}")
-        await callback.message.answer(f"❌ Не удалось отправить уведомление.")
-    
-    await callback.answer()
-
-# Обработка текста ответа от админа
 @router.message(AdminStates.waiting_for_reply, F.chat.id == ADMIN_ID)
 async def process_admin_reply(message: Message, state: FSMContext):
     data = await state.get_data()
     user_id = data.get("reply_to_user_id")
-    
     try:
         await message.copy_to(chat_id=user_id)
-        await message.answer(f"🚀 <b>Ответ успешно отправлен пользователю {user_id}!</b>")
+        await message.answer(f"🚀 <b>Ответ отправлен пользователю {user_id}!</b>")
         await state.clear()
     except Exception as e:
-        logger.error(f"Ошибка при отправке ответа: {e}")
+        logger.error(f"Ошибка при ответе: {e}")
         await message.answer(f"❌ <b>Ошибка:</b> {e}")
 
-# Регистрация роутера и запуск
-dp.include_router(router)
-
+# --- ВЕБ-СЕРВЕР ДЛЯ RENDER ---
 async def handle_health_check(request):
     return web.Response(text="Bot is running!")
-
 async def start_web_server():
     app = web.Application()
     app.router.add_get("/", handle_health_check)
     runner = web.AppRunner(app)
     await runner.setup()
-    # Порт 7860 для Hugging Face или 8080 для Render
-    port = int(os.getenv("PORT", 7860))
+    port = int(os.getenv("PORT", 10000)) # Render использует переменную PORT
     site = web.TCPSite(runner, "0.0.0.0", port)
-    logger.info(f"Веб-сервер запущен на порту {port}")
     await site.start()
+    logger.info(f"Веб-сервер запущен на порту {port}")
 
+# --- ЗАПУСК ---
 async def main():
-    logger.info("--- БОТ ЗАПУЩЕН (ВЕРСИЯ С ИСТОРИЕЙ) ---")
-    logger.info(f"Админ ID: {ADMIN_ID}")
-    
-    # Запускаем веб-сервер в фоне (нужно для хостинга)
-    asyncio.create_task(start_web_server())
-    
+    dp.include_router(router)
     await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
+    # Запускаем веб-сервер и бота параллельно
+    await asyncio.gather(
+        start_web_server(),
+        dp.start_polling(bot)
+    )
 
 if __name__ == "__main__":
     try:
+        logger.info("--- Запуск бота ---")
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         logger.info("Бот остановлен.")
